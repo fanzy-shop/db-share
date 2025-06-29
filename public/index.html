@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MongoDB Export/Import</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.6/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const App = () => {
+      const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('authToken'));
+      const [password, setPassword] = useState('');
+      const [mongoUri, setMongoUri] = useState('');
+      const [operation, setOperation] = useState('export');
+      const [status, setStatus] = useState('');
+      const [isLoading, setIsLoading] = useState(false);
+
+      useEffect(() => {
+        const checkAuth = async () => {
+          const token = localStorage.getItem('authToken');
+          if (token) {
+            try {
+              const response = await fetch('/api/verify-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token }),
+              });
+              const data = await response.json();
+              if (!data.success) {
+                localStorage.removeItem('authToken');
+                setIsAuthenticated(false);
+              }
+            } catch (error) {
+              localStorage.removeItem('authToken');
+              setIsAuthenticated(false);
+              setStatus('Error: Token verification failed');
+            }
+          }
+        };
+        checkAuth();
+      }, []);
+
+      const handleLogin = async (e) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setStatus('Authenticating...');
+
+        try {
+          const response = await fetch('/api/authenticate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            localStorage.setItem('authToken', data.token);
+            setIsAuthenticated(true);
+            setStatus('');
+            setPassword('');
+          } else {
+            setStatus(data.message || 'Invalid password');
+          }
+        } catch (error) {
+          setStatus('Error: Authentication failed');
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      const handleOperation = async (e) => {
+        e.preventDefault();
+        if (!mongoUri) {
+          setStatus('Please enter a MongoDB URI');
+          return;
+        }
+
+        setIsLoading(true);
+        setStatus('Processing...');
+
+        try {
+          const token = localStorage.getItem('authToken');
+          const response = await fetch(`/api/${operation}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ uri: mongoUri }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            setStatus(data.message);
+          } else {
+            setStatus(`Error: ${data.message}`);
+          }
+        } catch (error) {
+          setStatus(`Error: ${error.message}`);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      const handleLogout = () => {
+        localStorage.removeItem('authToken');
+        setIsAuthenticated(false);
+        setPassword('');
+        setMongoUri('');
+        setStatus('');
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
+            <h1 className="text-2xl font-bold mb-6 text-center">MongoDB Export/Import</h1>
+
+            {!isAuthenticated ? (
+              <div>
+                <p className="text-center mb-4">Enter password to access</p>
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
+                      className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:bg-blue-300"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Authenticating...' : 'Login'}
+                  </button>
+                </form>
+                {status && <p className="mt-4 text-center text-red-500">{status}</p>}
+              </div>
+            ) : (
+              <div>
+                <form onSubmit={handleOperation} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">MongoDB URI</label>
+                    <input
+                      type="text"
+                      value={mongoUri}
+                      onChange={(e) => setMongoUri(e.target.value)}
+                      placeholder="mongodb://user:pass@host:port"
+                      className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Operation</label>
+                    <select
+                      value={operation}
+                      onChange={(e) => setOperation(e.target.value)}
+                      className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="export">Export Collections</option>
+                      <option value="import">Import Collections</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:bg-blue-300"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Processing...' : 'Execute'}
+                  </button>
+                </form>
+                {status && (
+                  <div className="mt-4 text-center">
+                    <pre className={`whitespace-pre-wrap ${status.includes('Error') ? 'text-red-500' : 'text-green-500'}`}>
+                      {status}
+                    </pre>
+                  </div>
+                )}
+                <button
+                  onClick={handleLogout}
+                  className="mt-4 w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
