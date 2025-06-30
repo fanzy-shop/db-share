@@ -12,48 +12,71 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState } = React;
-
-    // Simulated backend functions (replace with actual API calls in production)
-    const simulateBackend = async (operation, uri, password) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (operation === 'export') {
-            resolve({ status: 'success', message: `Export completed for ${uri}`, data: [] });
-          } else if (operation === 'import') {
-            resolve({ status: 'success', message: `Import completed for ${uri}`, data: [] });
-          } else if (operation === 'clear') {
-            resolve({ status: 'success', message: `Cleared all import data` });
-          } else {
-            resolve({ status: 'error', message: 'Invalid operation' });
-          }
-        }, 1000);
-      });
-    };
+    const { useState, useEffect } = React;
 
     const App = () => {
-      const [isAuthenticated, setIsAuthenticated] = useState(false);
+      const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('authToken'));
       const [password, setPassword] = useState('');
       const [mongoUri, setMongoUri] = useState('');
       const [operation, setOperation] = useState('export');
       const [status, setStatus] = useState('');
       const [isLoading, setIsLoading] = useState(false);
 
-      const correctPassword = 'secureMongo2025'; // Hardcoded for demo; use proper auth in production
+      useEffect(() => {
+        const checkAuth = async () => {
+          const token = localStorage.getItem('authToken');
+          if (token) {
+            try {
+              const response = await fetch('/api/verify-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token }),
+              });
+              const data = await response.json();
+              if (!data.success) {
+                localStorage.removeItem('authToken');
+                setIsAuthenticated(false);
+              }
+            } catch (error) {
+              localStorage.removeItem('authToken');
+              setIsAuthenticated(false);
+              setStatus('Error: Token verification failed');
+            }
+          }
+        };
+        checkAuth();
+      }, []);
 
-      const handleLogin = (e) => {
+      const handleLogin = async (e) => {
         e.preventDefault();
-        if (password === correctPassword) {
-          setIsAuthenticated(true);
-          setStatus('');
-        } else {
-          setStatus('Invalid password');
+        setIsLoading(true);
+        setStatus('Authenticating...');
+
+        try {
+          const response = await fetch('/api/authenticate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            localStorage.setItem('authToken', data.token);
+            setIsAuthenticated(true);
+            setStatus('');
+            setPassword('');
+          } else {
+            setStatus(data.message || 'Invalid password');
+          }
+        } catch (error) {
+          setStatus('Error: Authentication failed');
+        } finally {
+          setIsLoading(false);
         }
       };
 
       const handleOperation = async (e) => {
         e.preventDefault();
-        if (operation !== 'clear' && !mongoUri) {
+        if (!mongoUri) {
           setStatus('Please enter a MongoDB URI');
           return;
         }
@@ -62,15 +85,21 @@
         setStatus('Processing...');
 
         try {
-          // Replace with actual API call, e.g.:
-          // const response = await fetch(`/api/${operation}`, {
-          //   method: 'POST',
-          //   headers: { 'Content-Type': 'application/json' },
-          //   body: JSON.stringify({ uri: mongoUri, password: correctPassword })
-          // });
-          // const data = await response.json();
-          const response = await simulateBackend(operation, mongoUri, password);
-          setStatus(response.message);
+          const token = localStorage.getItem('authToken');
+          const response = await fetch(`/api/${operation}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ uri: mongoUri }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            setStatus(data.message);
+          } else {
+            setStatus(`Error: ${data.message}`);
+          }
         } catch (error) {
           setStatus(`Error: ${error.message}`);
         } finally {
@@ -78,25 +107,12 @@
         }
       };
 
-      const handleClearData = async () => {
-        setIsLoading(true);
-        setStatus('Processing...');
-
-        try {
-          // Replace with actual API call, e.g.:
-          // const response = await fetch('/api/clear', {
-          //   method: 'POST',
-          //   headers: { 'Content-Type': 'application/json' },
-          //   body: JSON.stringify({ password: correctPassword })
-          // });
-          // const data = await response.json();
-          const response = await simulateBackend('clear', mongoUri, password);
-          setStatus(response.message);
-        } catch (error) {
-          setStatus(`Error: ${error.message}`);
-        } finally {
-          setIsLoading(false);
-        }
+      const handleLogout = () => {
+        localStorage.removeItem('authToken');
+        setIsAuthenticated(false);
+        setPassword('');
+        setMongoUri('');
+        setStatus('');
       };
 
       return (
@@ -122,7 +138,7 @@
                     className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:bg-blue-300"
                     disabled={isLoading}
                   >
-                    Login
+                    {isLoading ? 'Authenticating...' : 'Login'}
                   </button>
                 </form>
                 {status && <p className="mt-4 text-center text-red-500">{status}</p>}
@@ -159,20 +175,15 @@
                     {isLoading ? 'Processing...' : 'Execute'}
                   </button>
                 </form>
-                <button
-                  onClick={handleClearData}
-                  className="mt-4 w-full bg-red-500 text-white p-2 rounded hover:bg-red-600 disabled:bg-red-300"
-                  disabled={isLoading}
-                >
-                  {isLoading ? 'Processing...' : 'Clear Import Data'}
-                </button>
                 {status && (
-                  <p className={`mt-4 text-center ${status.includes('Error') ? 'text-red-500' : 'text-green-500'}`}>
-                    {status}
-                  </p>
+                  <div className="mt-4 text-center">
+                    <pre className={`whitespace-pre-wrap ${status.includes('Error') ? 'text-red-500' : 'text-green-500'}`}>
+                      {status}
+                    </pre>
+                  </div>
                 )}
                 <button
-                  onClick={() => setIsAuthenticated(false)}
+                  onClick={handleLogout}
                   className="mt-4 w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
                 >
                   Logout
